@@ -19,7 +19,7 @@ class Test(unittest.TestCase):
         def func(A, B, C):
             D = np.abs(np.sqrt(A).dot(np.square(B)))[:, None, :]
             E = 0.5 + (-np.cos(B).T * np.exp(D) / a + b.T) * np.sin(c) * 2.0
-            return E
+            return np.linalg.norm(E)
 
         E = func(A, B, C)
         epsilon = 1e-5
@@ -27,4 +27,5 @@ class Test(unittest.TestCase):
         En = func(A - A.grad * epsilon, B - B.grad * epsilon, C - C.grad * epsilon)
         dE = (Ep - En) / (epsilon * 2)
         error = numpy.max(numpy.abs(E.grad - dE.data))
+        print(error)
         self.assertTrue(error < 1e-8)

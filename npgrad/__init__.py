@@ -1,2 +1,3 @@
 from .core import *
 from . import random
+from . import linalg
