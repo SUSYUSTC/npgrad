@@ -1,5 +1,23 @@
 import numpy as np
 
+#TODO: return copies
+
+
+class Parameter(object):
+    def __init__(self, n):
+        self.n = n
+
+
+n_grad = Parameter(1)
+
+
+def get_n_grad():
+    return n_grad.n
+
+
+def set_n_grad(n):
+    n_grad.n = n
+
 
 class NoGradType(object):
     def __init__(self):
@@ -58,6 +76,77 @@ class NoGradType(object):
 NoGrad = NoGradType()
 
 
+def add_grad(a, b):
+    if b is NoGrad:
+        return a
+    else:
+        return a + b
+
+
+def add_vector(vec1, vec2):
+    assert isinstance(vec1, GradVector)
+    assert isinstance(vec2, GradVector)
+    return GradVector([add_grad(x1, x2) for x1, x2 in zip(vec1.vec, vec2.vec)])
+
+
+class GradVector(object):
+    def __init__(self, vec):
+        assert isinstance(vec, list)
+        self.vec = vec
+
+    def __add__(self, other):
+        if not isinstance(other, GradVector):
+            return GradVector([x + other for x in self.vec])
+        else:
+            return add_vector(self, other)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __sub__(self, other):
+        return self.__add__(-other)
+
+    def __rsub__(self, other):
+        return -self.__add__(-other)
+
+    def __mul__(self, other):
+        assert not isinstance(other, GradVector)
+        return GradVector([x * other for x in self.vec])
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return self.__mul__(1 / other)
+
+    def __neg__(self):
+        return GradVector([-x for x in self.vec])
+
+    def __repr__(self):
+        return 'GradVector\n' + self.vec.__repr__()
+
+    def __len__(self):
+        return len(self.vec)
+
+    def __getitem__(self, index):
+        index = getdata(index)
+        return GradVector([item[index] for item in self.vec])
+
+    def copy(self):
+        return GradVector([x.copy() for x in self.vec])
+
+    @property
+    def T(self):
+        return GradVector([x.T for x in self.vec])
+
+    def transpose(self):
+        return GradVector([x.T for x in self.vec])
+
+
+def get_empty_vector():
+    return GradVector([NoGrad for i in range(get_n_grad())])
+
+
 def getdata(x):
     if isinstance(x, ndarray):
         return x.data
@@ -67,17 +156,26 @@ def getdata(x):
     return x
 
 
+def combine_nograd(x):
+    for item in x:
+        if item is NoGrad:
+            return NoGrad
+    return x
+
+
 def getgrad(x):
+    if isinstance(x, GradVector):
+        return x
     if isinstance(x, ndarray):
         return x.grad
     for typ in [tuple, list]:
         if isinstance(x, typ):
             result = [getgrad(item) for item in x]
-            for item in result:
-                if item is NoGrad:
-                    return NoGrad
-            return typ(result)
-    return NoGrad
+            if len(result) == 0:
+                return GradVector([])
+            n = len(result[0])
+            return GradVector([combine_nograd(typ([item.vec[i] for item in result])) for i in range(n)])
+    return get_empty_vector()
 
 
 def asarray(x):
@@ -87,61 +185,48 @@ def asarray(x):
         return ndarray(x)
 
 
-def np_nograd_decorator2(func):
-    def wrapper(*args, **kwargs):
-        if args[1] is NoGrad:
-            return NoGrad
-        else:
-            return func(*args, **kwargs)
-    return wrapper
-
-
-def add_grad(a, b):
-    if b is NoGrad:
-        return a
-    else:
-        return a + b
-
-
 class ndarray(object):
-    def __init__(self, data, grad=NoGrad):
+    def __init__(self, data, grad=None):
         self.data = data
-        self.grad = grad
+        if grad is None:
+            self.grad = GradVector([NoGrad for i in range(get_n_grad())])
+        else:
+            self.grad = grad
 
-    def set_grad(self, grad):
-        self.grad = grad.data
+    def set_grad(self, grads):
+        self.grad = GradVector([grad.data for grad in grads])
 
     def __add__(self, other):
         other = asarray(other)
-        return ndarray(self.data + other.data, grad=add_grad(self.grad, other.grad))
+        return ndarray(self.data + other.data, grad=self.grad + other.grad)
 
     def __radd__(self, other):
         other = asarray(other)
-        return ndarray(self.data + other.data, grad=add_grad(self.grad, other.grad))
+        return ndarray(self.data + other.data, grad=self.grad + other.grad)
 
     def __sub__(self, other):
         other = asarray(other)
-        return ndarray(self.data - other.data, grad=add_grad(self.grad, -other.grad))
+        return ndarray(self.data - other.data, grad=self.grad - other.grad)
 
     def __rsub__(self, other):
         other = asarray(other)
-        return ndarray(other.data - self.data, grad=add_grad(-self.grad, -other.grad))
+        return ndarray(other.data - self.data, grad=other.grad - self.grad)
 
     def __mul__(self, other):
         other = asarray(other)
-        return ndarray(self.data * other.data, grad=add_grad(self.grad * other.data, other.grad * self.data))
+        return ndarray(self.data * other.data, grad=self.grad * other.data + other.grad * self.data)
 
     def __rmul__(self, other):
         other = asarray(other)
-        return ndarray(self.data * other.data, grad=add_grad(self.grad * other.data, other.grad * self.data))
+        return ndarray(self.data * other.data, grad=self.grad * other.data + other.grad * self.data)
 
     def __truediv__(self, other):
         other = asarray(other)
-        return ndarray(self.data / other.data, grad=add_grad(self.grad / other.data, -other.grad * self.data / other.data / other.data))
+        return ndarray(self.data / other.data, grad=self.grad / other.data - other.grad * self.data / other.data / other.data)
 
     def __rtruediv__(self, other):
         other = asarray(other)
-        return ndarray(other.data / self.data, grad=add_grad(other.grad / self.data, -self.grad * other.data / self.data / self.data))
+        return ndarray(other.data / self.data, grad=other.grad / self.data - self.grad * other.data / self.data / self.data)
 
     def __neg__(self):
         return self * -1
@@ -176,12 +261,17 @@ class ndarray(object):
         index = getdata(index)
         value = asarray(value)
         self.data[index] = value.data
-        if (self.grad is NoGrad) and (value.grad is not NoGrad):
-            self.grad = np.zeros_like(self.data)
-        if (self.grad is not NoGrad) and (value.grad is NoGrad):
-            self.grad[index] = 0
-        else:
-            self.grad[index] = value.grad
+
+        for i in range(len(self.grad)):
+            x = self.grad.vec[i]
+            v = value.grad.vec[i]
+            if (x is NoGrad) and (v is not NoGrad):
+                self.grad.vec[i] = np.zeros_like(self.data)
+            x = self.grad.vec[i]
+            if (x is not NoGrad) and (v is NoGrad):
+                x[index] = 0
+            else:
+                x[index] = v
 
     @property
     def T(self):
@@ -204,6 +294,16 @@ class ndarray(object):
         return ndarray(self.data.copy(), self.grad.copy())
 
 
+def array(array, *args, **kwargs):
+    data_array = getdata(array)
+    grad_array = getgrad(array)
+    data_array = np.array(data_array, *args, **kwargs)
+    for i in range(len(grad_array)):
+        if grad_array.vec[i] is not NoGrad:
+            grad_array.vec[i] = np.array(grad_array.vec[i])
+    return ndarray(data_array, grad=grad_array)
+
+
 def np_nograd_decorator(func):
     def wrapper(*args, **kwargs):
         if args[0] is NoGrad:
@@ -213,61 +313,36 @@ def np_nograd_decorator(func):
     return wrapper
 
 
-np.diag = np_nograd_decorator(np.diag)
-np.transpose = np_nograd_decorator(np.transpose)
-np.sum = np_nograd_decorator(np.sum)
-np.mean = np_nograd_decorator(np.mean)
+#np.diag = np_nograd_decorator(np.diag)
+#np.transpose = np_nograd_decorator(np.transpose)
+#np.sum = np_nograd_decorator(np.sum)
+#np.mean = np_nograd_decorator(np.mean)
+#np.repeat = np_nograd_decorator(np.mean)
 
 
-def array(array, *args, **kwargs):
-    data_array = getdata(array)
-    grad_array = getgrad(array)
-    data_nparray = np.array(data_array, *args, **kwargs)
-    if grad_array is NoGrad:
-        return ndarray(data_nparray)
-    else:
-        grad_nparray = np.array(grad_array, *args, **kwargs)
-        return ndarray(data_nparray, grad=grad_nparray)
+def vectormap1(func, x, *args, **kwargs):
+    assert isinstance(x, GradVector)
+    result = []
+    for item in x.vec:
+        if item is NoGrad:
+            result.append(NoGrad)
+        else:
+            result.append(func(item, *args, **kwargs))
+    return GradVector(result)
 
 
-def diag(x, *args, **kwargs):
-    return ndarray(np.diag(x.data, *args, **kwargs), np.diag(x.grad, *args, **kwargs))
+def apply_type_decorator(func):
+    def wrapper(x, *args, **kwargs):
+        return ndarray(func(x.data, *args, **kwargs), vectormap1(func, x.grad, *args, **kwargs))
+    return wrapper
 
 
-def transpose(x, *args, **kwargs):
-    return ndarray(np.transpose(x.data, *args, **kwargs), np.transpose(x.grad, *args, **kwargs))
-
-
-def sum(x, *args, **kwargs):
-    if x.grad is NoGrad:
-        grad = NoGrad
-    else:
-        grad = np.sum(x.grad, *args, **kwargs)
-    return ndarray(np.sum(x.data, *args, **kwargs), grad=grad)
-
-
-def mean(x, *args, **kwargs):
-    if x.grad is NoGrad:
-        grad = NoGrad
-    else:
-        grad = np.mean(x.grad, *args, **kwargs)
-    return ndarray(np.mean(x.data, *args, **kwargs), grad=grad)
-
-
-def repeat(x, *args, **kwargs):
-    if x.grad is NoGrad:
-        grad = NoGrad
-    else:
-        grad = np.repeat(x.grad, *args, **kwargs)
-    return ndarray(np.repeat(x.data, *args, **kwargs), grad=grad)
-
-
-def moveaxis(x, *args, **kwargs):
-    if x.grad is NoGrad:
-        grad = NoGrad
-    else:
-        grad = np.moveaxis(x.grad, *args, **kwargs)
-    return ndarray(np.moveaxis(x.data, *args, **kwargs), grad=grad)
+mean = apply_type_decorator(np.mean)
+sum = apply_type_decorator(np.sum)
+transpose = apply_type_decorator(np.transpose)
+diag = apply_type_decorator(np.diag)
+repeat = apply_type_decorator(np.repeat)
+moveaxis = apply_type_decorator(np.moveaxis)
 
 
 def sin(x):
@@ -335,7 +410,7 @@ def argsort(x, *args, **kwargs):
 
 def dot(a, b):
     data = a.data.dot(b.data)
-    grad = a.grad.dot(b.data) + a.data.dot(b.grad)
+    grad = GradVector([item.dot(b.data) for item in a.grad.vec]) + GradVector([a.data.dot(item) for item in b.grad.vec])
     return ndarray(data, grad)
 
 
